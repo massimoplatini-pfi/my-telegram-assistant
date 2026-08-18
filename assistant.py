@@ -1,6 +1,8 @@
 import os
 import sqlite3
 import logging
+import threading  # <-- AGGIUNTO
+from http.server import HTTPServer, BaseHTTPRequestHandler  # <-- AGGIUNTO
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
@@ -158,14 +160,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------------------------------------------
 # AVVIO BOT
 # -------------------------------------------------------------------
+# -------------------------------------------------------------------
+# MINI SERVER HTTP (per i controlli di Render)
+# -------------------------------------------------------------------
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+def run_health_check():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
+
+# -------------------------------------------------------------------
+# AVVIO BOT
+# -------------------------------------------------------------------
 if __name__ == '__main__':
     init_db()
-    
+
+    # 1. Avvia PRIMA il server HTTP in un thread separato
+    threading.Thread(target=run_health_check, daemon=True).start()
+
+    # 2. Inizializza l'app Telegram
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset_memory))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-    print("🤖 Assistente avviato correttamente! Invia un messaggio su Telegram.")
+    print("🤖 Assistente avviato correttamente!")
+    
+    # 3. Avvia il polling per ultimo (funzione bloccante)
     app.run_polling()
