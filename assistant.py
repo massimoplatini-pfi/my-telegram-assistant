@@ -1,8 +1,8 @@
 import os
 import sqlite3
 import logging
-import threading  # <-- AGGIUNTO
-from http.server import HTTPServer, BaseHTTPRequestHandler  # <-- AGGIUNTO
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
@@ -17,14 +17,12 @@ logging.basicConfig(
 # -------------------------------------------------------------------
 # CONFIGURAZIONE CHIAVI E INIZIALIZZAZIONE
 # -------------------------------------------------------------------
-# Inserisci le tue chiavi qui sotto sostituendo i segnaposto
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-# Inizializzazione del client Gemini
+
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
 MODEL_ID = "gemini-3.6-flash"
 
-# System Prompt per definire la personalità del bot
 SYSTEM_PROMPT = (
     "Sei un assistente personale interattivo, efficiente, cortese e conciso. "
     "Il tuo compito è aiutare l'utente a organizzare idee, rispondere a quesiti "
@@ -74,7 +72,6 @@ def get_recent_history(user_id: int, limit: int = 10) -> list:
     rows = cursor.fetchall()
     conn.close()
     
-    # Inverte l'ordine per mantenere la sequenza temporale corretta
     history = []
     for role, content in reversed(rows):
         history.append({"role": role, "content": content})
@@ -117,16 +114,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_text = update.message.text
 
-    # 1. Salva il messaggio dell'utente nel DB
     save_message(user_id, "user", user_text)
-
-    # 2. Mostra lo stato "sta scrivendo..." su Telegram
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    # 3. Recupera la cronologia recente
     raw_history = get_recent_history(user_id, limit=12)
 
-    # 4. Prepara i contenuti nel formato dell'SDK google-genai
     contents = []
     for msg in raw_history:
         gemini_role = "user" if msg["role"] == "user" else "model"
@@ -138,7 +130,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     try:
-        # 5. Invia la richiesta a Gemini
         response = ai_client.models.generate_content(
             model=MODEL_ID,
             contents=contents,
@@ -153,23 +144,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Errore Gemini API: {e}")
         bot_response = "⚠️ Si è verificato un errore durante l'elaborazione della risposta. Riprova tra poco."
 
-    # 6. Salva la risposta dell'AI e inviala all'utente
     save_message(user_id, "model", bot_response)
     await update.message.reply_text(bot_response)
 
 # -------------------------------------------------------------------
-# AVVIO BOT
-# -------------------------------------------------------------------
-# -------------------------------------------------------------------
-# MINI SERVER HTTP (per i controlli di Render)
+# MINI SERVER HTTP (per i controlli di Render e Cron-Job)
 # -------------------------------------------------------------------
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        response_text = b"OK"
         self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(response_text)))
         self.end_headers()
-        self.wfile.write(b"OK")
+        self.wfile.write(response_text)
+        
+    def log_message(self, format, *args):
+        return
 
 def run_health_check():
+    """Avvia il server HTTP sulla porta fornita dall'ambiente."""
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
